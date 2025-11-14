@@ -1,15 +1,15 @@
+// api/sunoDiscoverAll.js
 import fetch from "node-fetch";
 
 export default async function handler(req, res) {
   const cookie = process.env.SUNO_COOKIE;
-
   if (!cookie) {
-    return res.status(400).json({ error: "SUNO_COOKIE not set" });
+    return res.status(400).json({ error: "SUNO_COOKIE missing" });
   }
 
   try {
     //
-    // STEP 1 — Get Clerk client to extract the JWT token
+    // STEP 1 — Get JWT from Clerk
     //
     const clerkRes = await fetch(
       "https://clerk.suno.com/v1/client?__clerk_api_version=2025-11-10&_clerk_js_version=5.108.0",
@@ -29,11 +29,11 @@ export default async function handler(req, res) {
       clerkJson?.response?.sessions?.[0]?.last_active_token?.jwt;
 
     if (!jwt) {
-      return res.status(401).json({ error: "JWT not found (cookie expired)" });
+      return res.status(401).json({ error: "JWT not found (Cookie expired)" });
     }
 
     //
-    // STEP 2 — Build browser-token like Suno does
+    // STEP 2 — Build Suno Browser Token
     //
     const browserToken = {
       token: JSON.stringify({
@@ -42,7 +42,7 @@ export default async function handler(req, res) {
     };
 
     //
-    // STEP 3 — Call Discover API
+    // STEP 3 — Fetch PUBLIC Songs
     //
     const discoverRes = await fetch(
       "https://studio-api.prod.suno.com/api/discover/",
@@ -51,21 +51,22 @@ export default async function handler(req, res) {
         headers: {
           "User-Agent": "Mozilla/5.0",
           Accept: "*/*",
-          Authorization: "Bearer " + jwt,
+          Authorization: `Bearer ${jwt}`,
+          "Content-Type": "application/json",
 
-          // required headers from browser request
-          "device-id": "9df77292-efb5-4c1e-bb9c-9cf771c61254",
+          // Required headers from browser traffic
+          "device-id": "public-scraper",
           "browser-token": JSON.stringify(browserToken),
+
           Origin: "https://suno.com",
           Referer: "https://suno.com/",
-          "Content-Type": "application/json",
         },
 
-        // pagination, etc. You can change page, size, filters...
+        // You can customize categories, filtering, page, size, etc.
         body: JSON.stringify({
           page: 0,
-          page_size: 20,
-          list_type: "trending", 
+          page_size: 100,   // fetch 100 songs at once
+          list_type: "trending", // "new", "for_you", etc.
         }),
       }
     );
@@ -74,12 +75,12 @@ export default async function handler(req, res) {
 
     return res.status(200).json({
       ok: true,
-      count: discoverJson?.results?.length,
-      results: discoverJson.results,
+      total: discoverJson?.results?.length,
+      songs: discoverJson.results,
     });
   } catch (err) {
-    return res.status(500).json({
-      error: "Failed to fetch discover",
+    res.status(500).json({
+      error: "Failed to fetch discover songs",
       details: err.message,
     });
   }
