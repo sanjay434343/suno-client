@@ -5,7 +5,9 @@ export default async function handler(req, res) {
   if (!cookie) return res.status(400).json({ error: "SUNO_COOKIE missing" });
 
   try {
-    // STEP 1 — Get JWT
+    //
+    // STEP 1 — Get JWT from Clerk
+    //
     const clerkRes = await fetch(
       "https://clerk.suno.com/v1/client?__clerk_api_version=2025-11-10&_clerk_js_version=5.108.0",
       {
@@ -14,70 +16,93 @@ export default async function handler(req, res) {
           Cookie: cookie,
           Origin: "https://suno.com",
           Referer: "https://suno.com/",
-          Accept: "*/*",
-        },
+          Accept: "*/*"
+        }
       }
     );
 
     const clerkJson = await clerkRes.json();
-    const jwt =
-      clerkJson?.response?.sessions?.[0]?.last_active_token?.jwt;
+    const jwt = clerkJson?.response?.sessions?.[0]?.last_active_token?.jwt;
 
-    if (!jwt) return res.status(401).json({ error: "JWT missing" });
+    if (!jwt) return res.status(401).json({ error: "JWT missing (bad or expired cookie)" });
 
-    // Browser-token
+    //
+    // STEP 2 — Build browser-token EXACTLY like Suno
+    //
     const browserToken = {
-      token: JSON.stringify({ timestamp: Date.now() }),
+      token: JSON.stringify({
+        timestamp: Date.now()
+      })
     };
 
-    // Request body
+    //
+    // STEP 3 — Build request body (Suno requires this format)
+    //
     const body = JSON.stringify({
       page: 0,
-      page_size: 20,
-      list_type: "trending", // public feed
+      page_size: 50,
+      list_type: "trending"
     });
 
-    // STEP 2 — Discover API request (fully mimicked)
+    //
+    // STEP 4 — FULL Suno headers (All required)
+    //
     const discoverRes = await fetch(
       "https://studio-api.prod.suno.com/api/discover/",
       {
         method: "POST",
         headers: {
           "User-Agent": "Mozilla/5.0",
-
           Accept: "*/*",
           Authorization: `Bearer ${jwt}`,
           "Content-Type": "application/json",
-          "Content-Length": body.length.toString(),
 
+          // MUST MATCH your browser
           "device-id": "9df77292-efb5-4c1e-bb9c-9cf771c61254",
           "browser-token": JSON.stringify(browserToken),
 
-          // 🔥 These 4 headers FIX THE ISSUE:
+          // CRITICAL HEADERS (missing before):
           "x-suno-client": "web",
+          "client-version": "v1.0.0",
+          "app-platform": "web",
+
           "x-requested-with": "XMLHttpRequest",
           "sec-fetch-site": "same-site",
           "sec-fetch-mode": "cors",
           "sec-fetch-dest": "empty",
 
           Origin: "https://suno.com",
-          Referer: "https://suno.com/",
+          Referer: "https://suno.com/"
         },
-        body,
+        body
       }
     );
 
-    const discoverJson = await discoverRes.json();
+    //
+    // STEP 5 — Parse JSON safely
+    //
+    const text = await discoverRes.text();
+
+    // handle HTML error responses
+    if (text.startsWith("<")) {
+      return res.status(502).json({
+        error: "Suno returned HTML instead of JSON",
+        html: text.substring(0, 200)
+      });
+    }
+
+    const json = JSON.parse(text);
 
     return res.status(200).json({
       ok: true,
-      total: discoverJson?.results?.length || 0,
-      results: discoverJson?.results || [],
+      total: json?.results?.length || 0,
+      results: json?.results || []
     });
+
   } catch (err) {
-    res.status(500).json({
+    return res.status(500).json({
       error: "Failed",
-      details: err.message,
+      details: err.message
     });
   }
 }
