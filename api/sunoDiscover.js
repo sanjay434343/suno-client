@@ -11,65 +11,72 @@ export default async function handler(req, res) {
       {
         headers: {
           "User-Agent": "Mozilla/5.0",
-          Accept: "*/*",
           Cookie: cookie,
           Origin: "https://suno.com",
           Referer: "https://suno.com/",
+          Accept: "*/*",
         },
       }
     );
 
-    const clerk = await clerkRes.json();
-    const jwt = clerk?.response?.sessions?.[0]?.last_active_token?.jwt;
+    const clerkJson = await clerkRes.json();
+    const jwt =
+      clerkJson?.response?.sessions?.[0]?.last_active_token?.jwt;
 
-    if (!jwt) {
-      return res.status(401).json({ error: "JWT missing or expired" });
-    }
+    if (!jwt) return res.status(401).json({ error: "JWT missing" });
 
-    // STEP 2 — Browser token
+    // Browser-token
     const browserToken = {
       token: JSON.stringify({ timestamp: Date.now() }),
     };
 
-    // STEP 3 — Request body
-    const bodyData = {
+    // Request body
+    const body = JSON.stringify({
       page: 0,
-      page_size: 50,     // 50 songs
-      list_type: "trending",  // trending/public
-    };
+      page_size: 20,
+      list_type: "trending", // public feed
+    });
 
-    const bodyString = JSON.stringify(bodyData);
-
-    // STEP 4 — CALL DISCOVER API
+    // STEP 2 — Discover API request (fully mimicked)
     const discoverRes = await fetch(
       "https://studio-api.prod.suno.com/api/discover/",
       {
         method: "POST",
         headers: {
           "User-Agent": "Mozilla/5.0",
+
           Accept: "*/*",
           Authorization: `Bearer ${jwt}`,
           "Content-Type": "application/json",
-          "Content-Length": bodyString.length.toString(), // REQUIRED
-          "device-id": "suno-public",
+          "Content-Length": body.length.toString(),
+
+          "device-id": "9df77292-efb5-4c1e-bb9c-9cf771c61254",
           "browser-token": JSON.stringify(browserToken),
+
+          // 🔥 These 4 headers FIX THE ISSUE:
+          "x-suno-client": "web",
+          "x-requested-with": "XMLHttpRequest",
+          "sec-fetch-site": "same-site",
+          "sec-fetch-mode": "cors",
+          "sec-fetch-dest": "empty",
+
           Origin: "https://suno.com",
           Referer: "https://suno.com/",
         },
-        body: bodyString, // REQUIRED
+        body,
       }
     );
 
-    const data = await discoverRes.json();
+    const discoverJson = await discoverRes.json();
 
     return res.status(200).json({
       ok: true,
-      total: data?.results?.length || 0,
-      results: data?.results || [],
+      total: discoverJson?.results?.length || 0,
+      results: discoverJson?.results || [],
     });
   } catch (err) {
-    return res.status(500).json({
-      error: "Discover API failed",
+    res.status(500).json({
+      error: "Failed",
       details: err.message,
     });
   }
